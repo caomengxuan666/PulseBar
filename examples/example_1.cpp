@@ -8,9 +8,11 @@ using namespace std::chrono_literals;
 // 自定义动画策略
 class RainbowAnimation : public pulse::AnimationStrategy {
 public:
-    const char* getCurrentFrame(double elapsed_time) const override {
+    // ✅ 正确覆盖基类虚函数（添加percent参数）
+    const char* getCurrentFrame(double elapsed_time, int percent) const override {
         static const char* frames[] = {"🌈", "ROYGBIV", "🌟", "✨", "⚡"};
-        return frames[static_cast<int>(elapsed_time * 2) % 5];
+        // 使用percent参数增加动画变化
+        return frames[static_cast<int>((elapsed_time * 2) + (percent / 20.0)) % 5];
     }
 };
 
@@ -76,6 +78,7 @@ void example_nested() {
     main_bar.complete();
 }
 
+//todo 修复多线程的只能显示一个的问题
 // 示例4: 多线程
 void example_multithreaded() {
     auto worker_task = [](int id, int total_work) {
