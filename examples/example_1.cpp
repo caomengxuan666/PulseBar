@@ -117,28 +117,11 @@ void example_set_label() {
 void example_milliseconds_time() {
     pulse::PulseBar bar(100, 50, "精确计时");
 
-    // 设置带毫秒的时间格式
-    bar.setTimeFormatCallback([](double elapsed, bool is_completed) {
-        std::string time_info = " | \033[35m"; // Magenta color
-        if (is_completed) {
-            int minutes = static_cast<int>(elapsed) / 60;
-            int seconds = static_cast<int>(elapsed) % 60;
-            int milliseconds = static_cast<int>((elapsed * 1000)) % 1000;
-            char buffer[32];
-            snprintf(buffer, sizeof(buffer), "Elapsed: %02d:%02d.%03d", minutes, seconds, milliseconds);
-            time_info += buffer;
-        } else {
-            double estimated_total = elapsed * 100; // 总进度是100
-            double remaining = estimated_total - elapsed;
-            int seconds = static_cast<int>(remaining);
-            int milliseconds = static_cast<int>((remaining * 1000)) % 1000;
-            char buffer[32];
-            snprintf(buffer, sizeof(buffer), "ETA: %02d.%03ds", seconds, milliseconds);
-            time_info += buffer;
-        }
-        time_info += "\033[0m";
-        return time_info;
-    });
+    // 用户可以选择设置时间格式，默认为秒
+    bar.setTimeFormat("%S.%3N"); // 显示秒和毫秒
+
+    // 时间显示的颜色也可以修改
+    bar.setTimeColor(pulse::ColorType::BRIGHT_YELLOW);
 
     for (int i = 0; i <= 100; ++i) {
         bar.update(i);

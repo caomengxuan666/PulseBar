@@ -35,9 +35,9 @@ namespace pulse {
         BRIGHT_MAGENTA,
         BRIGHT_CYAN,
         BRIGHT_WHITE,
-        RESET
+        RESET,
+        HEX// 新增支持十六进制颜色
     };
-
     // 动画策略接口
     class AnimationStrategy {
     public:
@@ -54,8 +54,6 @@ namespace pulse {
             return pulses[pulse_idx];
         }
     };
-
-
     // 颜色工具类
     class ColorUtils {
     public:
@@ -78,6 +76,17 @@ namespace pulse {
                     {ColorType::BRIGHT_WHITE, "\033[1;37m"},
                     {ColorType::RESET, "\033[0m"}};
             return colorMap.at(type);
+        }
+
+        static std::string getAnsiCode(const std::string &hexColor) {
+            // 将十六进制颜色转换为ANSI转义序列
+            if (hexColor.size() != 7 || hexColor[0] != '#') {
+                throw std::invalid_argument("Invalid hex color format. Expected format: #RRGGBB");
+            }
+            int r = std::stoi(hexColor.substr(1, 2), nullptr, 16);
+            int g = std::stoi(hexColor.substr(3, 2), nullptr, 16);
+            int b = std::stoi(hexColor.substr(5, 2), nullptr, 16);
+            return "\033[38;2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) + "m";
         }
     };
 
@@ -130,21 +139,41 @@ namespace pulse {
 
         void update(int now, bool force_complete = false) {
             std::lock_guard<std::recursive_mutex> lock(global_mtx_);
+
+            // 更新当前进度值（不超过总值）
             now_ = std::min(now, total_);
             if (force_complete) now_ = total_;
 
+            // 计算经过的时间
             auto current_time = std::chrono::high_resolution_clock::now();
             double elapsed = std::chrono::duration<double>(current_time - start_time_).count();
+
+            // 计算百分比和已填充的进度条宽度
             int percent = calculatePercent(now_);
             int filled = calculateFilledWidth(now_);
 
+            // 移动光标到指定行并清除当前行
             moveCursorToLine(line_index_);
-            std::cout << "\r\033[2K";// 清除当前行
+            std::cout << "\r\033[2K";// 清除行并回到行首
 
-            std::string bar = buildLabelString();
-            bar += buildProgressBar(now_, filled, elapsed, percent);
-            bar += buildTimeInfo(now_, elapsed);
+            // 构建进度条字符串
+            std::string bar = buildLabelString();                   // 标签部分
+            bar += buildProgressBar(now_, filled, elapsed, percent);// 进度条主体
 
+            // 计算剩余时间（用于 ETA 显示）
+            double estimated_total = 0.0;
+            double remaining = 0.0;
+
+            if (now_ > 0) {
+                estimated_total = elapsed * total_ / now_;// 总预计时间
+                remaining = estimated_total - elapsed;    // 剩余时间
+                if (remaining < 0) remaining = 0.0;       // 避免负数
+            }
+
+            // 构建时间信息（传递 elapsed, is_completed, remaining）
+            bar += buildTimeInfoImpl(elapsed, (now_ == total_), remaining);
+
+            // 刷新输出
             std::cout << bar << std::flush;
         }
 
@@ -169,8 +198,14 @@ namespace pulse {
             color_blend_callback_ = callback;
         }
 
-        void setTimeFormatCallback(TimeFormatCallback callback) {
-            time_format_callback_ = callback;
+        // 新增方法：设置时间颜色
+        void setTimeColor(ColorType time_color) {
+            time_color_code_ = ColorUtils::getAnsiCode(time_color);
+        }
+
+        // 新增方法：设置时间格式
+        void setTimeFormat(const std::string &format) {
+            time_format_ = format;
         }
 
         static void newline() {
@@ -244,55 +279,55 @@ namespace pulse {
             return bar;
         }
 
-        std::string buildTimeInfo(int now, double elapsed) const {
-            if (now <= 0 || elapsed <= 0.1) return "";
-            std::string time_info = " | " + ColorUtils::getAnsiCode(ColorType::MAGENTA);
-            if (now == total_) {
-                int minutes = static_cast<int>(elapsed) / 60;
-                int seconds = static_cast<int>(elapsed) % 60;
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "Elapsed: %02d:%02d", minutes, seconds);
-                time_info += buffer;
-            } else {
-                double estimated_total = elapsed * total_ / now;
-                double remaining = estimated_total - elapsed;
-                int minutes = static_cast<int>(remaining) / 60;
-                int seconds = static_cast<int>(remaining) % 60;
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "ETA: %02d:%02d", minutes, seconds);
-                time_info += buffer;
-            }
-            time_info += reset_code_;
-            return time_info;
-        }
 
-        //todo: support format time
-        std::string buildTimeInfoImpl(double elapsed, bool is_completed) const {
+        // 新增成员变量：时间颜色代码
+        std::string time_color_code_ = ColorUtils::getAnsiCode(ColorType::MAGENTA);
+
+        // 新增成员变量：时间格式
+        std::string time_format_;
+
+        // 改进时间信息构建方法，使用经过的时间（elapsed time）进行格式化
+        std::string buildTimeInfoImpl(double elapsed, bool is_completed, double remaining) const {
             std::ostringstream oss;
-            if (is_completed) {
-                int minutes = static_cast<int>(elapsed) / 60;
-                int seconds = static_cast<int>(elapsed) % 60;
-                int milliseconds = static_cast<int>((elapsed * 1000)) % 1000;
-                oss << "Elapsed: " << std::setw(2) << std::setfill('0') << minutes << ":"
-                    << std::setw(2) << seconds << "."
-                    << std::setw(3) << milliseconds;
+            std::string time_str;
+
+            if (!time_format_.empty()) {
+                std::string temp_format = time_format_;
+                double time_source = is_completed ? elapsed : remaining;
+
+                // 替换%S（整秒）
+                auto pos = temp_format.find("%S");
+                if (pos != std::string::npos) {
+                    int seconds = static_cast<int>(time_source);
+                    temp_format.replace(pos, 2, std::to_string(seconds));
+                }
+
+                // 替换%3N（毫秒，补零至3位）
+                pos = temp_format.find("%3N");
+                if (pos != std::string::npos) {
+                    int milliseconds = static_cast<int>((time_source - static_cast<int>(time_source)) * 1000);
+                    std::ostringstream oss_ms;
+                    oss_ms << std::setw(3) << std::setfill('0') << milliseconds;
+                    temp_format.replace(pos, 3, oss_ms.str());
+                }
+
+                // 拼接标签和单位
+                if (is_completed) {
+                    time_str = "Elapsed: " + temp_format + "s";
+                } else {
+                    time_str = "ETA: " + temp_format + "s";
+                }
             } else {
-                double estimated_total = elapsed * total_ / now_;
-                double remaining = estimated_total - elapsed;
-                int minutes = static_cast<int>(remaining) / 60;
-                int seconds = static_cast<int>(remaining) % 60;
-                int milliseconds = static_cast<int>((remaining * 1000)) % 1000;
-                oss << "ETA: " << std::setw(2) << std::setfill('0') << minutes << ":"
-                    << std::setw(2) << seconds << "."
-                    << std::setw(3) << milliseconds;
+                // 默认格式
+                if (is_completed) {
+                    time_str = " Elapsed: " + std::to_string(static_cast<int>(elapsed)) + "s";
+                } else {
+                    time_str = " ETA: " + std::to_string(static_cast<int>(remaining)) + "s";
+                }
             }
-            return "\033[35m" + oss.str() + "\033[0m";
+
+            return time_color_code_ + time_str + reset_code_;
         }
-
-        TimeFormatCallback time_format_callback_ = [this](double elapsed, bool is_completed) {
-            return buildTimeInfoImpl(elapsed, is_completed);
-        };
-
 
         void moveCursorToLine(int target_line) {
             if (target_line > line_index_) {
