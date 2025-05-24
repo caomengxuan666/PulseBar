@@ -3,11 +3,11 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
-#include <string>
 #include <sstream>
-#include <iomanip>
+#include <string>
 #include <utility>
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -19,54 +19,75 @@
 namespace pulse {
     // 颜色枚举
     enum class ColorType {
-        RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, GRAY,
-        BRIGHT_RED, BRIGHT_GREEN, BRIGHT_YELLOW, BRIGHT_BLUE,
-        BRIGHT_MAGENTA, BRIGHT_CYAN, BRIGHT_WHITE, RESET, HEX
+        RED,
+        GREEN,
+        YELLOW,
+        BLUE,
+        MAGENTA,
+        CYAN,
+        WHITE,
+        GRAY,
+        BRIGHT_RED,
+        BRIGHT_GREEN,
+        BRIGHT_YELLOW,
+        BRIGHT_BLUE,
+        BRIGHT_MAGENTA,
+        BRIGHT_CYAN,
+        BRIGHT_WHITE,
+        RESET,
+        HEX
     };
 
     // 动画策略接口
     class AnimationStrategy {
     public:
         virtual ~AnimationStrategy() = default;
-        virtual const char* getCurrentFrame(double elapsed_time, int percent) const = 0;
+        virtual const char *getCurrentFrame(double elapsed_time, int percent) const = 0;
     };
 
     // 默认动画
     class DefaultPulseAnimation : public AnimationStrategy {
     public:
-        const char* getCurrentFrame(double elapsed_time, int percent) const override {
-            static const char* pulses[] = {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"};
-            int pulse_idx = static_cast<int>(elapsed_time * 10) % 14;
+        const char *getCurrentFrame(double elapsed_time, int percent) const override {
+            static const char *pulses[] = {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"};
+            int pulse_idx = static_cast<int>(elapsed_time * 15) % 14;
             return pulses[pulse_idx];
         }
     };
+
+    // 实心块动画
+    class SolidBlockAnimation : public AnimationStrategy {
+    public:
+        const char *getCurrentFrame(double elapsed_time, int percent) const override {
+            return "█";// 固定使用实心块
+        }
+    } inline solidBlockAnimation;
 
     // 颜色工具类
     class ColorUtils {
     public:
         static std::string getAnsiCode(ColorType type) {
             static const std::unordered_map<ColorType, std::string> colorMap = {
-                {ColorType::RED, "\033[31m"},
-                {ColorType::GREEN, "\033[32m"},
-                {ColorType::YELLOW, "\033[33m"},
-                {ColorType::BLUE, "\033[34m"},
-                {ColorType::MAGENTA, "\033[35m"},
-                {ColorType::CYAN, "\033[36m"},
-                {ColorType::WHITE, "\033[37m"},
-                {ColorType::GRAY, "\033[90m"},
-                {ColorType::BRIGHT_RED, "\033[1;31m"},
-                {ColorType::BRIGHT_GREEN, "\033[1;32m"},
-                {ColorType::BRIGHT_YELLOW, "\033[1;33m"},
-                {ColorType::BRIGHT_BLUE, "\033[1;34m"},
-                {ColorType::BRIGHT_MAGENTA, "\033[1;35m"},
-                {ColorType::BRIGHT_CYAN, "\033[1;36m"},
-                {ColorType::BRIGHT_WHITE, "\033[1;37m"},
-                {ColorType::RESET, "\033[0m"}
-            };
+                    {ColorType::RED, "\033[31m"},
+                    {ColorType::GREEN, "\033[32m"},
+                    {ColorType::YELLOW, "\033[33m"},
+                    {ColorType::BLUE, "\033[34m"},
+                    {ColorType::MAGENTA, "\033[35m"},
+                    {ColorType::CYAN, "\033[36m"},
+                    {ColorType::WHITE, "\033[37m"},
+                    {ColorType::GRAY, "\033[90m"},
+                    {ColorType::BRIGHT_RED, "\033[1;31m"},
+                    {ColorType::BRIGHT_GREEN, "\033[1;32m"},
+                    {ColorType::BRIGHT_YELLOW, "\033[1;33m"},
+                    {ColorType::BRIGHT_BLUE, "\033[1;34m"},
+                    {ColorType::BRIGHT_MAGENTA, "\033[1;35m"},
+                    {ColorType::BRIGHT_CYAN, "\033[1;36m"},
+                    {ColorType::BRIGHT_WHITE, "\033[1;37m"},
+                    {ColorType::RESET, "\033[0m"}};
             return colorMap.at(type);
         }
 
-        static std::string getAnsiCode(const std::string& hexColor) {
+        static std::string getAnsiCode(const std::string &hexColor) {
             if (hexColor.size() != 7 || hexColor[0] != '#') {
                 throw std::invalid_argument("Invalid hex color format. Expected format: #RRGGBB");
             }
@@ -85,30 +106,37 @@ namespace pulse {
     // 脉冲进度条类
     class PulseBar {
     public:
-        explicit PulseBar(int total,
+        explicit PulseBar(const std::string &label)
+            : PulseBar(100, 50, label, ColorType::BRIGHT_CYAN, ColorType::BRIGHT_WHITE, new DefaultPulseAnimation()) {
+        }
+
+        explicit PulseBar(int total, const std::string &label)
+            : PulseBar(total, 50, label, ColorType::BRIGHT_CYAN, ColorType::BRIGHT_WHITE, new DefaultPulseAnimation()) {
+        }
+
+        explicit PulseBar(int total = 100,
                           int width = 50,
-                          const std::string& label = "Progress",
+                          const std::string &label = "",// 修改：移除默认标签
                           ColorType bar_color = ColorType::BRIGHT_CYAN,
                           ColorType label_color = ColorType::BRIGHT_WHITE,
-                          AnimationStrategy* animation = new DefaultPulseAnimation())
+                          AnimationStrategy *animation = new DefaultPulseAnimation())
             : total_(total),
               width_(width),
-              label_(label),
+              label_(label.empty() ? "Progress" : label),
               start_time_(std::chrono::high_resolution_clock::now()),
               animation_(animation),
               last_print_time_(0.0),
               last_print_now_(0),
               avg_time_(0.0),
               smoothing_(0.3f),
-              mininterval_(0.1),
-              miniters_(1) {
-            // 初始化默认回调
-            bracket_callback_ = [](int percent) {
-                return std::make_pair(std::string("["), std::string("]"));
-            };
-            color_blend_callback_ = [bar_color](int pos, int width, int percent) {
-                return bar_color;
-            };
+              mininterval_(0.05),
+              miniters_(0),
+              bracket_callback_([](int percent) {// 修改：在初始化列表中直接初始化回调
+                  return std::make_pair(std::string("|"), std::string("|"));
+              }),
+              color_blend_callback_([bar_color](int pos, int width, int percent) {// 修改：直接初始化颜色混合回调
+                  return bar_color;
+              }) {
             // 设置颜色
             bar_color_code_ = ColorUtils::getAnsiCode(bar_color);
             label_color_code_ = ColorUtils::getAnsiCode(label_color);
@@ -128,11 +156,19 @@ namespace pulse {
             std::cout.flush();
         }
 
+        void setAnimation(AnimationStrategy *animation) {
+            animation_ = animation;
+        }
+
+        void operator++(){
+            ++now_;
+        }
+
         void update(int now, bool force_complete = false) {
             std::lock_guard<std::recursive_mutex> lock(global_mtx_);
             now_ = std::min(now, total_);
             if (force_complete) now_ = total_;
-            
+
             auto current_time = std::chrono::high_resolution_clock::now();
             double elapsed = std::chrono::duration<double>(current_time - start_time_).count();
 
@@ -153,7 +189,7 @@ namespace pulse {
             std::cout << std::endl;
         }
 
-        void setLabel(const std::string& new_label) {
+        void setLabel(const std::string &new_label) {
             std::lock_guard<std::recursive_mutex> lock(global_mtx_);
             label_ = new_label;
             update(now_, false);
@@ -171,7 +207,7 @@ namespace pulse {
             time_color_code_ = ColorUtils::getAnsiCode(time_color);
         }
 
-        void setTimeFormat(const std::string& format) {
+        void setTimeFormat(const std::string &format) {
             time_format_ = format;
         }
 
@@ -212,7 +248,7 @@ namespace pulse {
 
             // 构建进度条
             moveCursorToLine(line_index_);
-            std::cout << "\r\033[2K"; // 清除行
+            std::cout << "\r\033[2K";// 清除行
             std::string bar = buildLabelString();
             bar += buildProgressBar(now_, filled, elapsed, percent);
             bar += buildTimeInfoImpl(elapsed, (now_ == total_), remaining, iteration_speed);
@@ -235,15 +271,14 @@ namespace pulse {
             auto [left_bracket, right_bracket] = bracket_callback_(percent);
             std::string bar;
             bar += left_bracket;
-            
+
             for (int i = 0; i < width_; ++i) {
                 if (i < filled) {
-                    bar += ColorUtils::getAnsiCode(color_blend_callback_(i, width_, percent)) + "█";
-                } else if (i == filled && now < total_) {
+                    // 使用当前动画帧
                     bar += ColorUtils::getAnsiCode(color_blend_callback_(i, width_, percent)) +
-                           animation_->getCurrentFrame(elapsed, percent);
+                           (i == filled - 1 ? animation_->getCurrentFrame(elapsed, percent) : "█");
                 } else {
-                    bar += reset_code_ + " ";
+                    bar += reset_code_ + " ";// 空格填充
                 }
             }
             bar += reset_code_ + right_bracket;
@@ -255,18 +290,18 @@ namespace pulse {
         std::string buildTimeInfoImpl(double elapsed, bool is_completed, double remaining, double iteration_speed) const {
             std::ostringstream oss;
             std::string time_str;
-            
+
             if (!time_format_.empty()) {
                 std::string temp_format = time_format_;
                 double time_source = is_completed ? elapsed : remaining;
-                
+
                 // 替换%S（整秒）
                 auto pos = temp_format.find("%S");
                 if (pos != std::string::npos) {
                     int seconds = static_cast<int>(time_source);
                     temp_format.replace(pos, 2, std::to_string(seconds));
                 }
-                
+
                 // 替换%3N（毫秒，补零至3位）
                 pos = temp_format.find("%3N");
                 if (pos != std::string::npos) {
@@ -275,7 +310,7 @@ namespace pulse {
                     oss_ms << std::setw(3) << std::setfill('0') << milliseconds;
                     temp_format.replace(pos, 3, oss_ms.str());
                 }
-                
+
                 // 拼接标签和单位
                 if (is_completed) {
                     time_str = "Elapsed: " + temp_format + "s";
@@ -295,7 +330,7 @@ namespace pulse {
             speed_oss << std::fixed << std::setprecision(2) << iteration_speed;
             std::string speed_str = speed_oss.str() + "it/s";
 
-            return time_color_code_ +" " +time_str + " [" + speed_str + "]" + reset_code_;
+            return time_color_code_ + " " + time_str + " [" + speed_str + "]" + reset_code_;
         }
 
         void moveCursorToLine(int target_line) {
@@ -330,33 +365,33 @@ namespace pulse {
         // 成员变量
         int total_;
         int width_;
-        std::string label_;
+        std::string label_ = "Progress";// 添加默认值初始化
         std::chrono::time_point<std::chrono::high_resolution_clock> start_time_;
         int line_index_;
         int now_ = 0;
-        AnimationStrategy* animation_;
-        
+        AnimationStrategy *animation_;
+
         // 回调函数
         BracketCallback bracket_callback_;
         ColorBlendCallback color_blend_callback_;
-        
+
         // 颜色代码
         std::string bar_color_code_;
         std::string label_color_code_;
         std::string reset_code_;
         std::string time_color_code_;
         std::string time_format_;
-        
+
         // EMA 相关
         double avg_time_;
         float smoothing_;
-        
+
         // 刷新控制
         double mininterval_;
         unsigned miniters_;
         double last_print_time_;
         int last_print_now_;
-        
+
         // 静态成员
         static std::recursive_mutex global_mtx_;
         static std::atomic<int> next_line_index_;
@@ -365,4 +400,4 @@ namespace pulse {
     // 静态成员初始化
     inline std::recursive_mutex PulseBar::global_mtx_;
     inline std::atomic<int> PulseBar::next_line_index_(0);
-}
+}// namespace pulse
